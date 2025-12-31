@@ -1,0 +1,8 @@
+#!/usr/bin/with-contenv bashio
+# shellcheck shell=bash
+# ==============================================================================
+# ToDoTracker Service Finish Script
+# Handles service shutdown
+# ==============================================================================
+
+bashio::log.info "ToDoTracker stopped"

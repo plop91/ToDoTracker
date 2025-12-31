@@ -1,0 +1,36 @@
+#!/usr/bin/with-contenv bashio
+# shellcheck shell=bash
+# ==============================================================================
+# ToDoTracker Service
+# Starts the ToDoTracker FastAPI application
+# ==============================================================================
+
+# Read configuration from Home Assistant
+LOG_LEVEL=$(bashio::config 'log_level')
+
+bashio::log.info "Starting ToDoTracker..."
+bashio::log.info "Log level: ${LOG_LEVEL}"
+
+# Set environment variables for the application
+export TODOTRACKER_DATA_DIR="/data"
+export TODOTRACKER_ATTACHMENTS_DIR="/data/attachments"
+export TODOTRACKER_DATABASE_URL="sqlite+aiosqlite:////data/todotracker.db"
+export TODOTRACKER_API_HOST="0.0.0.0"
+export TODOTRACKER_API_PORT="8099"
+export TODOTRACKER_FRONTEND_DIR="/app/frontend"
+
+# Set debug mode based on log level
+if [ "${LOG_LEVEL}" = "debug" ]; then
+    export TODOTRACKER_DEBUG="true"
+else
+    export TODOTRACKER_DEBUG="false"
+fi
+
+# Create data directories if they don't exist
+mkdir -p /data/attachments
+
+# Start the application
+exec python3 -m uvicorn todotracker.main:app \
+    --host 0.0.0.0 \
+    --port 8099 \
+    --log-level "${LOG_LEVEL}"

@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ToDoTracker</title>
+    <link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+    <div class="app">
+        <header class="header">
+            <h1>ToDoTracker</h1>
+            <p class="tagline">Spend less time setting up, more time doing</p>
+        </header>
+
+        <main class="main">
+            <!-- Add Todo Form -->
+            <section class="add-todo">
+                <form id="addTodoForm" class="add-form">
+                    <input type="text" id="todoTitle" placeholder="What needs to be done?" required>
+                    <div class="form-row">
+                        <select id="todoPriority">
+                            <option value="5">Normal</option>
+                            <option value="1">Lowest</option>
+                            <option value="3">Low</option>
+                            <option value="7">High</option>
+                            <option value="9">Critical</option>
+                            <option value="10">Urgent</option>
+                        </select>
+                        <select id="todoCategory">
+                            <option value="">No Category</option>
+                        </select>
+                        <input type="datetime-local" id="todoDueDate">
+                        <button type="submit" class="btn btn-primary">Add</button>
+                    </div>
+                </form>
+            </section>
+
+            <!-- Filters -->
+            <section class="filters">
+                <button class="filter-btn active" data-filter="pending">Pending</button>
+                <button class="filter-btn" data-filter="completed">Completed</button>
+                <button class="filter-btn" data-filter="all">All</button>
+            </section>
+
+            <!-- Todo List -->
+            <section class="todo-list" id="todoList">
+                <div class="loading">Loading...</div>
+            </section>
+        </main>
+
+        <!-- Category Modal -->
+        <div id="categoryModal" class="modal hidden">
+            <div class="modal-content">
+                <h2>Add Category</h2>
+                <form id="addCategoryForm">
+                    <input type="text" id="categoryName" placeholder="Category name" required>
+                    <input type="color" id="categoryColor" value="#3b82f6">
+                    <div class="modal-actions">
+                        <button type="button" class="btn" onclick="closeCategoryModal()">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Add</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script src="static/app.js"></script>
+</body>
+</html>

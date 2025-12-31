@@ -1,0 +1,143 @@
+"""Todo API endpoints."""
+
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from todotracker.database import get_db
+from todotracker.schemas.todo import (
+    TodoCreate,
+    TodoUpdate,
+    TodoResponse,
+    TodoListResponse,
+)
+from todotracker.services.todo_service import TodoService
+
+router = APIRouter(prefix="/todos", tags=["todos"])
+
+
+@router.get("", response_model=TodoListResponse)
+async def list_todos(
+    category_id: str | None = None,
+    tag_id: str | None = None,
+    priority_min: int | None = None,
+    priority_max: int | None = None,
+    completed: bool | None = None,
+    due_before: datetime | None = None,
+    due_after: datetime | None = None,
+    page: int = 1,
+    page_size: int = 50,
+    db: AsyncSession = Depends(get_db),
+):
+    """List todos with optional filtering."""
+    service = TodoService(db)
+    todos, total = await service.get_all(
+        category_id=category_id,
+        tag_id=tag_id,
+        priority_min=priority_min,
+        priority_max=priority_max,
+        completed=completed,
+        due_before=due_before,
+        due_after=due_after,
+        page=page,
+        page_size=page_size,
+    )
+    return TodoListResponse(
+        items=[TodoResponse.model_validate(t) for t in todos],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.post("", response_model=TodoResponse, status_code=status.HTTP_201_CREATED)
+async def create_todo(
+    data: TodoCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new todo."""
+    service = TodoService(db)
+    todo = await service.create(data)
+    return TodoResponse.model_validate(todo)
+
+
+@router.get("/{todo_id}", response_model=TodoResponse)
+async def get_todo(
+    todo_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get a single todo by ID."""
+    service = TodoService(db)
+    todo = await service.get_by_id(todo_id)
+    if not todo:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Todo not found",
+        )
+    return TodoResponse.model_validate(todo)
+
+
+@router.put("/{todo_id}", response_model=TodoResponse)
+async def update_todo(
+    todo_id: str,
+    data: TodoUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a todo."""
+    service = TodoService(db)
+    todo = await service.update(todo_id, data)
+    if not todo:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Todo not found",
+        )
+    return TodoResponse.model_validate(todo)
+
+
+@router.delete("/{todo_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_todo(
+    todo_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a todo and its subtasks."""
+    service = TodoService(db)
+    deleted = await service.delete(todo_id)
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Todo not found",
+        )
+
+
+@router.post("/{todo_id}/complete", response_model=TodoResponse)
+async def complete_todo(
+    todo_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Mark a todo as complete."""
+    service = TodoService(db)
+    todo = await service.mark_complete(todo_id)
+    if not todo:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Todo not found",
+        )
+    return TodoResponse.model_validate(todo)
+
+
+@router.post("/{todo_id}/subtasks", response_model=TodoResponse, status_code=status.HTTP_201_CREATED)
+async def create_subtask(
+    todo_id: str,
+    data: TodoCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Add a subtask to an existing todo."""
+    service = TodoService(db)
+    subtask = await service.add_subtask(todo_id, data)
+    if not subtask:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Parent todo not found",
+        )
+    return TodoResponse.model_validate(subtask)

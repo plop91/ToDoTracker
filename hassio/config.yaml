@@ -1,0 +1,44 @@
+name: "ToDoTracker"
+description: "Task manager - spend less time setting up, more time doing"
+version: "0.1.0"
+slug: "todotracker"
+url: "https://github.com/ianso/todotracker"
+arch:
+  - amd64
+  - aarch64
+  - armv7
+init: false
+startup: application
+boot: auto
+
+# Ingress configuration
+ingress: true
+ingress_port: 8099
+ingress_entry: /
+panel_icon: "mdi:checkbox-marked-outline"
+panel_title: "ToDoTracker"
+panel_admin: false
+
+# API access
+hassio_api: false
+homeassistant_api: false
+auth_api: false
+
+# Port for external API access (HA automations)
+ports:
+  8099/tcp: null
+ports_description:
+  8099/tcp: "ToDoTracker API (set port number to expose externally)"
+
+# Persistent storage
+map:
+  - data:rw
+
+# User options
+options:
+  log_level: info
+schema:
+  log_level: list(debug|info|warning|error)
+
+# Build configuration
+image: "ghcr.io/{arch}-addon-todotracker"
