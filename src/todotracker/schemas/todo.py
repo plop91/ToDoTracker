@@ -29,6 +29,7 @@ class TodoUpdate(BaseSchema):
     description: str | None = None
     due_date: datetime | None = None
     priority: int | None = Field(None, ge=1, le=10)
+    parent_id: str | None = None
     category_id: str | None = None
     tag_ids: list[str] | None = None
     completed: bool | None = None

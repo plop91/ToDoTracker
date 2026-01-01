@@ -31,3 +31,10 @@ class CategoryResponse(BaseSchema):
     color: str | None
     icon: str | None
     created_at: datetime
+
+
+class CategoryListResponse(BaseSchema):
+    """Schema for paginated category list responses."""
+
+    items: list[CategoryResponse]
+    total: int

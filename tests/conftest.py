@@ -2,6 +2,7 @@
 
 import asyncio
 import pytest
+from pathlib import Path
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 
@@ -9,6 +10,8 @@ from todotracker.models import Base
 from todotracker.main import create_app
 from todotracker.database import get_db
 from todotracker.services.todo_service import PriorityService
+from todotracker.services.cache import priority_cache
+from todotracker.config import get_settings
 
 
 @pytest.fixture(scope="session")
@@ -17,6 +20,31 @@ def event_loop():
     loop = asyncio.get_event_loop_policy().new_event_loop()
     yield loop
     loop.close()
+
+
+@pytest.fixture(autouse=True)
+def reset_caches():
+    """Reset all caches before each test for isolation."""
+    priority_cache.invalidate()
+    yield
+    priority_cache.invalidate()
+
+
+@pytest.fixture
+def test_attachments_dir(tmp_path):
+    """Create a temporary directory for attachments during tests."""
+    attachments_dir = tmp_path / "attachments"
+    attachments_dir.mkdir()
+
+    # Patch the settings to use the temp directory
+    settings = get_settings()
+    original_dir = settings.attachments_dir
+    settings.attachments_dir = attachments_dir
+
+    yield attachments_dir
+
+    # Restore original
+    settings.attachments_dir = original_dir
 
 
 @pytest.fixture

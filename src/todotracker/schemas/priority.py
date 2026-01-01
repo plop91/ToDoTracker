@@ -18,3 +18,10 @@ class PriorityLevelResponse(BaseSchema):
     level: int
     name: str
     color: str | None
+
+
+class PriorityListResponse(BaseSchema):
+    """Schema for priority level list responses."""
+
+    items: list[PriorityLevelResponse]
+    total: int

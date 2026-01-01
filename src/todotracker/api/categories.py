@@ -8,20 +8,24 @@ from todotracker.schemas.category import (
     CategoryCreate,
     CategoryUpdate,
     CategoryResponse,
+    CategoryListResponse,
 )
 from todotracker.services.todo_service import CategoryService
 
 router = APIRouter(prefix="/categories", tags=["categories"])
 
 
-@router.get("", response_model=list[CategoryResponse])
+@router.get("", response_model=CategoryListResponse)
 async def list_categories(
     db: AsyncSession = Depends(get_db),
 ):
     """List all categories."""
     service = CategoryService(db)
     categories = await service.get_all()
-    return [CategoryResponse.model_validate(c) for c in categories]
+    return CategoryListResponse(
+        items=[CategoryResponse.model_validate(c) for c in categories],
+        total=len(categories),
+    )
 
 
 @router.post("", response_model=CategoryResponse, status_code=status.HTTP_201_CREATED)
@@ -55,13 +59,12 @@ async def get_category(
     return CategoryResponse.model_validate(category)
 
 
-@router.put("/{category_id}", response_model=CategoryResponse)
-async def update_category(
+async def _update_category_impl(
     category_id: str,
     data: CategoryUpdate,
-    db: AsyncSession = Depends(get_db),
-):
-    """Update a category."""
+    db: AsyncSession,
+) -> CategoryResponse:
+    """Shared implementation for PUT and PATCH category updates."""
     service = CategoryService(db)
     update_data = data.model_dump(exclude_unset=True)
     category = await service.update(category_id, **update_data)
@@ -71,6 +74,26 @@ async def update_category(
             detail="Category not found",
         )
     return CategoryResponse.model_validate(category)
+
+
+@router.put("/{category_id}", response_model=CategoryResponse)
+async def update_category(
+    category_id: str,
+    data: CategoryUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a category (full update)."""
+    return await _update_category_impl(category_id, data, db)
+
+
+@router.patch("/{category_id}", response_model=CategoryResponse)
+async def patch_category(
+    category_id: str,
+    data: CategoryUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Partially update a category (only specified fields are modified)."""
+    return await _update_category_impl(category_id, data, db)
 
 
 @router.delete("/{category_id}", status_code=status.HTTP_204_NO_CONTENT)

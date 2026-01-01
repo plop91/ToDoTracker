@@ -12,7 +12,7 @@ from todotracker.schemas.todo import (
     TodoResponse,
     TodoListResponse,
 )
-from todotracker.services.todo_service import TodoService
+from todotracker.services.todo_service import TodoService, TodoValidationError
 
 router = APIRouter(prefix="/todos", tags=["todos"])
 
@@ -58,7 +58,13 @@ async def create_todo(
 ):
     """Create a new todo."""
     service = TodoService(db)
-    todo = await service.create(data)
+    try:
+        todo = await service.create(data)
+    except TodoValidationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=e.message,
+        )
     return TodoResponse.model_validate(todo)
 
 
@@ -78,21 +84,46 @@ async def get_todo(
     return TodoResponse.model_validate(todo)
 
 
-@router.put("/{todo_id}", response_model=TodoResponse)
-async def update_todo(
+async def _update_todo_impl(
     todo_id: str,
     data: TodoUpdate,
-    db: AsyncSession = Depends(get_db),
-):
-    """Update a todo."""
+    db: AsyncSession,
+) -> TodoResponse:
+    """Shared implementation for PUT and PATCH todo updates."""
     service = TodoService(db)
-    todo = await service.update(todo_id, data)
+    try:
+        todo = await service.update(todo_id, data)
+    except TodoValidationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=e.message,
+        )
     if not todo:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Todo not found",
         )
     return TodoResponse.model_validate(todo)
+
+
+@router.put("/{todo_id}", response_model=TodoResponse)
+async def update_todo(
+    todo_id: str,
+    data: TodoUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a todo (full update)."""
+    return await _update_todo_impl(todo_id, data, db)
+
+
+@router.patch("/{todo_id}", response_model=TodoResponse)
+async def patch_todo(
+    todo_id: str,
+    data: TodoUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Partially update a todo (only specified fields are modified)."""
+    return await _update_todo_impl(todo_id, data, db)
 
 
 @router.delete("/{todo_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -134,7 +165,13 @@ async def create_subtask(
 ):
     """Add a subtask to an existing todo."""
     service = TodoService(db)
-    subtask = await service.add_subtask(todo_id, data)
+    try:
+        subtask = await service.add_subtask(todo_id, data)
+    except TodoValidationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=e.message,
+        )
     if not subtask:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

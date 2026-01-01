@@ -4,29 +4,35 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from todotracker.database import get_db
-from todotracker.schemas.priority import PriorityLevelUpdate, PriorityLevelResponse
+from todotracker.schemas.priority import (
+    PriorityLevelUpdate,
+    PriorityLevelResponse,
+    PriorityListResponse,
+)
 from todotracker.services.todo_service import PriorityService
 
 router = APIRouter(prefix="/priorities", tags=["priorities"])
 
 
-@router.get("", response_model=list[PriorityLevelResponse])
+@router.get("", response_model=PriorityListResponse)
 async def list_priorities(
     db: AsyncSession = Depends(get_db),
 ):
     """List all priority levels."""
     service = PriorityService(db)
     priorities = await service.get_all()
-    return [PriorityLevelResponse.model_validate(p) for p in priorities]
+    return PriorityListResponse(
+        items=[PriorityLevelResponse.model_validate(p) for p in priorities],
+        total=len(priorities),
+    )
 
 
-@router.put("/{level}", response_model=PriorityLevelResponse)
-async def update_priority(
+async def _update_priority_impl(
     level: int,
     data: PriorityLevelUpdate,
-    db: AsyncSession = Depends(get_db),
-):
-    """Update a priority level's name or color."""
+    db: AsyncSession,
+) -> PriorityLevelResponse:
+    """Shared implementation for PUT and PATCH priority updates."""
     if not 1 <= level <= 10:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -41,3 +47,23 @@ async def update_priority(
             detail="Priority level not found",
         )
     return PriorityLevelResponse.model_validate(priority)
+
+
+@router.put("/{level}", response_model=PriorityLevelResponse)
+async def update_priority(
+    level: int,
+    data: PriorityLevelUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a priority level's name or color (full update)."""
+    return await _update_priority_impl(level, data, db)
+
+
+@router.patch("/{level}", response_model=PriorityLevelResponse)
+async def patch_priority(
+    level: int,
+    data: PriorityLevelUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Partially update a priority level (only specified fields are modified)."""
+    return await _update_priority_impl(level, data, db)

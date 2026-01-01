@@ -8,6 +8,7 @@ from todotracker.services.todo_service import (
     CategoryService,
     TagService,
     PriorityService,
+    TodoValidationError,
 )
 from todotracker.schemas.todo import TodoCreate, TodoUpdate
 
@@ -127,6 +128,133 @@ class TestTodoService:
 
         assert all(not t.completed for t in incomplete)
         assert all(t.completed for t in complete)
+
+
+class TestTodoServiceValidation:
+    """Tests for TodoService validation (depth limits and circular references)."""
+
+    @pytest.mark.asyncio
+    async def test_subtask_depth_limit(self, test_session):
+        """Test that subtask depth is limited to max_subtask_depth (default 5)."""
+        service = TodoService(test_session)
+
+        # Create a chain of nested subtasks up to the limit
+        parent = await service.create(TodoCreate(title="Level 0"))
+        current = parent
+
+        # Create subtasks up to depth 5 (should succeed)
+        for i in range(1, 6):
+            current = await service.add_subtask(
+                current.id,
+                TodoCreate(title=f"Level {i}")
+            )
+            assert current is not None
+            assert current.title == f"Level {i}"
+
+        # Attempting to create a 6th level subtask should fail
+        with pytest.raises(TodoValidationError) as exc_info:
+            await service.add_subtask(
+                current.id,
+                TodoCreate(title="Level 6 - Too Deep")
+            )
+        assert "Maximum subtask depth" in exc_info.value.message
+
+    @pytest.mark.asyncio
+    async def test_self_reference_prevented(self, test_session):
+        """Test that a todo cannot be its own parent."""
+        service = TodoService(test_session)
+        todo = await service.create(TodoCreate(title="Self-referencing todo"))
+
+        with pytest.raises(TodoValidationError) as exc_info:
+            await service.update(
+                todo.id,
+                TodoUpdate(parent_id=todo.id)
+            )
+        assert "circular reference" in exc_info.value.message.lower()
+
+    @pytest.mark.asyncio
+    async def test_circular_reference_prevented(self, test_session):
+        """Test that circular references are prevented."""
+        service = TodoService(test_session)
+
+        # Create A -> B -> C chain
+        todo_a = await service.create(TodoCreate(title="A"))
+        todo_b = await service.add_subtask(todo_a.id, TodoCreate(title="B"))
+        todo_c = await service.add_subtask(todo_b.id, TodoCreate(title="C"))
+
+        # Try to make A a child of C (would create C -> A -> B -> C cycle)
+        with pytest.raises(TodoValidationError) as exc_info:
+            await service.update(
+                todo_a.id,
+                TodoUpdate(parent_id=todo_c.id)
+            )
+        assert "circular reference" in exc_info.value.message.lower()
+
+    @pytest.mark.asyncio
+    async def test_circular_reference_grandchild(self, test_session):
+        """Test that setting parent to a grandchild is prevented."""
+        service = TodoService(test_session)
+
+        # Create A -> B -> C -> D chain
+        todo_a = await service.create(TodoCreate(title="A"))
+        todo_b = await service.add_subtask(todo_a.id, TodoCreate(title="B"))
+        todo_c = await service.add_subtask(todo_b.id, TodoCreate(title="C"))
+        todo_d = await service.add_subtask(todo_c.id, TodoCreate(title="D"))
+
+        # Try to make B a child of D (would create D -> B -> C -> D cycle)
+        with pytest.raises(TodoValidationError) as exc_info:
+            await service.update(
+                todo_b.id,
+                TodoUpdate(parent_id=todo_d.id)
+            )
+        assert "circular reference" in exc_info.value.message.lower()
+
+    @pytest.mark.asyncio
+    async def test_nonexistent_parent_rejected(self, test_session):
+        """Test that setting parent to a non-existent ID fails."""
+        service = TodoService(test_session)
+
+        with pytest.raises(TodoValidationError) as exc_info:
+            await service.create(
+                TodoCreate(title="Orphan", parent_id="nonexistent-uuid")
+            )
+        assert "not found" in exc_info.value.message.lower()
+
+    @pytest.mark.asyncio
+    async def test_valid_parent_change_allowed(self, test_session):
+        """Test that valid parent changes are allowed."""
+        service = TodoService(test_session)
+
+        # Create two separate parent todos
+        parent1 = await service.create(TodoCreate(title="Parent 1"))
+        parent2 = await service.create(TodoCreate(title="Parent 2"))
+
+        # Create a child of parent1
+        child = await service.add_subtask(parent1.id, TodoCreate(title="Child"))
+        assert child.parent_id == parent1.id
+
+        # Move child to parent2 (should succeed)
+        updated = await service.update(
+            child.id,
+            TodoUpdate(parent_id=parent2.id)
+        )
+        assert updated.parent_id == parent2.id
+
+    @pytest.mark.asyncio
+    async def test_move_to_root_allowed(self, test_session):
+        """Test that moving a subtask to root level is allowed."""
+        service = TodoService(test_session)
+
+        parent = await service.create(TodoCreate(title="Parent"))
+        child = await service.add_subtask(parent.id, TodoCreate(title="Child"))
+        assert child.parent_id == parent.id
+
+        # Move to root (set parent_id to None)
+        updated = await service.update(
+            child.id,
+            TodoUpdate(parent_id=None)
+        )
+        assert updated.parent_id is None
 
 
 class TestCategoryService:

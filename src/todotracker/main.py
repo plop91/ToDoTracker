@@ -70,9 +70,23 @@ def create_app() -> FastAPI:
         @app.get("/{path:path}")
         async def serve_frontend_files(path: str):
             """Serve frontend static files or fallback to index.html for SPA routing."""
-            file_path = frontend_dir / path
-            if file_path.exists() and file_path.is_file():
-                return FileResponse(file_path)
+            # Resolve the path and check it's within the frontend directory
+            # This prevents path traversal attacks like /../../../etc/passwd
+            try:
+                file_path = (frontend_dir / path).resolve()
+                frontend_resolved = frontend_dir.resolve()
+
+                # Ensure the resolved path is within the frontend directory
+                # is_relative_to() is the safest cross-platform check (Python 3.9+)
+                if not file_path.is_relative_to(frontend_resolved):
+                    return HTMLResponse("<h1>Forbidden</h1>", status_code=403)
+
+                if file_path.exists() and file_path.is_file():
+                    return FileResponse(file_path)
+            except (ValueError, OSError):
+                # Invalid path (e.g., null bytes, invalid characters)
+                return HTMLResponse("<h1>Bad Request</h1>", status_code=400)
+
             # Fallback to index.html for SPA routing
             index_path = frontend_dir / "index.html"
             if index_path.exists():
