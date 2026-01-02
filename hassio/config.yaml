@@ -41,4 +41,4 @@ schema:
   log_level: list(debug|info|warning|error)
 
 # Build configuration
-image: "ghcr.io/{arch}-addon-todotracker"
+image: "ghcr.io/ianso/{arch}-addon-todotracker"
