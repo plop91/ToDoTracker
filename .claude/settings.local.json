@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(todo list)",
+      "Bash(todo done:*)",
+      "Bash(todo list:*)",
+      "Bash(todo categories)",
+      "Bash(todo tags)",
+      "Bash(todo priorities)",
+      "Bash(timeout:*)",
+      "Bash(ping:*)",
+      "Bash(curl:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(python -m todotracker.cli:*)"
+    ]
+  }
+}

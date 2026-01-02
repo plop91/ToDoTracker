@@ -7,6 +7,38 @@ let todos = [];
 let categories = [];
 let currentFilter = 'pending';
 
+// API Error class for structured error handling
+class ApiError extends Error {
+    constructor(message, status, detail = null) {
+        super(message);
+        this.name = 'ApiError';
+        this.status = status;
+        this.detail = detail;
+    }
+}
+
+// Helper function to handle API responses with proper error checking
+async function handleResponse(response) {
+    if (!response.ok) {
+        let detail = null;
+        try {
+            const errorData = await response.json();
+            detail = errorData.detail || errorData.message || null;
+        } catch {
+            // Response body is not JSON or empty
+        }
+        const message = detail || `HTTP ${response.status}: ${response.statusText}`;
+        throw new ApiError(message, response.status, detail);
+    }
+
+    // Handle 204 No Content responses
+    if (response.status === 204) {
+        return null;
+    }
+
+    return await response.json();
+}
+
 // API Functions
 async function fetchTodos(completed = null) {
     const params = new URLSearchParams();
@@ -14,13 +46,14 @@ async function fetchTodos(completed = null) {
         params.append('completed', completed);
     }
     const response = await fetch(`${API_BASE}/todos?${params}`);
-    const data = await response.json();
+    const data = await handleResponse(response);
     return data.items || [];
 }
 
 async function fetchCategories() {
     const response = await fetch(`${API_BASE}/categories`);
-    return await response.json();
+    const data = await handleResponse(response);
+    return data.items || [];
 }
 
 async function createTodo(todo) {
@@ -29,14 +62,14 @@ async function createTodo(todo) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(todo)
     });
-    return await response.json();
+    return await handleResponse(response);
 }
 
 async function completeTodo(id) {
     const response = await fetch(`${API_BASE}/todos/${id}/complete`, {
         method: 'POST'
     });
-    return await response.json();
+    return await handleResponse(response);
 }
 
 async function updateTodo(id, updates) {
@@ -45,13 +78,14 @@ async function updateTodo(id, updates) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updates)
     });
-    return await response.json();
+    return await handleResponse(response);
 }
 
 async function deleteTodo(id) {
-    await fetch(`${API_BASE}/todos/${id}`, {
+    const response = await fetch(`${API_BASE}/todos/${id}`, {
         method: 'DELETE'
     });
+    await handleResponse(response);
 }
 
 async function createCategory(category) {
@@ -60,7 +94,7 @@ async function createCategory(category) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(category)
     });
-    return await response.json();
+    return await handleResponse(response);
 }
 
 // UI Functions
@@ -150,6 +184,15 @@ function renderCategories() {
         '<option value="__new__">+ Add Category</option>';
 }
 
+// Helper to show user-friendly error messages
+function showError(error, defaultMessage) {
+    const message = error instanceof ApiError
+        ? error.detail || error.message
+        : defaultMessage;
+    alert(message);
+    console.error(defaultMessage, error);
+}
+
 // Event Handlers
 async function toggleTodo(id, completed) {
     try {
@@ -160,7 +203,7 @@ async function toggleTodo(id, completed) {
         }
         await loadTodos();
     } catch (error) {
-        console.error('Error toggling todo:', error);
+        showError(error, 'Failed to update todo status.');
     }
 }
 
@@ -170,7 +213,7 @@ async function deleteTodoItem(id) {
         await deleteTodo(id);
         await loadTodos();
     } catch (error) {
-        console.error('Error deleting todo:', error);
+        showError(error, 'Failed to delete todo.');
     }
 }
 
@@ -236,8 +279,7 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('todoDueDate').value = '';
             await loadTodos();
         } catch (error) {
-            console.error('Error creating todo:', error);
-            alert('Failed to create todo. Please try again.');
+            showError(error, 'Failed to create todo. Please try again.');
         }
     });
 
@@ -264,8 +306,7 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('categoryName').value = '';
             await loadCategories();
         } catch (error) {
-            console.error('Error creating category:', error);
-            alert('Failed to create category. Please try again.');
+            showError(error, 'Failed to create category. Please try again.');
         }
     });
 

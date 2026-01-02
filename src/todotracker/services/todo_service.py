@@ -19,12 +19,53 @@ class TodoValidationError(Exception):
         super().__init__(message)
 
 
+def _build_subtask_loader(depth: int):
+    """Build nested selectinload chain for subtasks up to specified depth.
+
+    Args:
+        depth: Maximum nesting depth to load (e.g., 5 loads 5 levels of subtasks)
+
+    Returns:
+        A selectinload chain that eager-loads subtasks to the specified depth.
+    """
+    if depth <= 0:
+        return None
+
+    # Start with the innermost level and work outward
+    loader = selectinload(Todo.subtasks)
+    for _ in range(depth - 1):
+        loader = selectinload(Todo.subtasks).options(
+            loader,
+            selectinload(Todo.category),
+            selectinload(Todo.tags),
+            selectinload(Todo.attachments),
+        )
+    return loader
+
+
 class TodoService:
     """Service for todo CRUD operations."""
 
     def __init__(self, db: AsyncSession):
         self.db = db
         self.settings = get_settings()
+
+    def _get_subtask_load_options(self):
+        """Get SQLAlchemy load options for subtasks based on max depth setting."""
+        depth = self.settings.max_subtask_depth
+        options = [
+            selectinload(Todo.category),
+            selectinload(Todo.tags),
+            selectinload(Todo.attachments),
+        ]
+
+        # Build nested subtask loader for full depth
+        if depth > 0:
+            loader = _build_subtask_loader(depth)
+            if loader:
+                options.append(loader)
+
+        return options
 
     async def _get_parent_depth(self, parent_id: str) -> int:
         """Calculate the depth of a todo in the hierarchy.
@@ -143,6 +184,35 @@ class TodoService:
                 f"Parent is already at depth {parent_depth}."
             )
 
+    async def _validate_and_get_tags(self, tag_ids: list[str]) -> list[Tag]:
+        """Validate that all tag IDs exist and return the Tag objects.
+
+        Args:
+            tag_ids: List of tag IDs to validate.
+
+        Returns:
+            List of Tag objects.
+
+        Raises:
+            TodoValidationError: If any tag IDs don't exist.
+        """
+        if not tag_ids:
+            return []
+
+        tag_query = select(Tag).where(Tag.id.in_(tag_ids))
+        result = await self.db.execute(tag_query)
+        tags = list(result.scalars())
+
+        # Check if all requested tags were found
+        found_ids = {tag.id for tag in tags}
+        missing_ids = set(tag_ids) - found_ids
+        if missing_ids:
+            raise TodoValidationError(
+                f"Tag(s) not found: {', '.join(sorted(missing_ids))}"
+            )
+
+        return tags
+
     async def get_all(
         self,
         *,
@@ -160,15 +230,8 @@ class TodoService:
     ) -> tuple[list[Todo], int]:
         """Get todos with filtering and pagination."""
         # Base query for root todos (no parent) unless parent_id specified
-        query = select(Todo).options(
-            selectinload(Todo.category),
-            selectinload(Todo.tags),
-            selectinload(Todo.attachments),
-            selectinload(Todo.subtasks).selectinload(Todo.category),
-            selectinload(Todo.subtasks).selectinload(Todo.tags),
-            selectinload(Todo.subtasks).selectinload(Todo.attachments),
-            selectinload(Todo.subtasks).selectinload(Todo.subtasks),
-        )
+        # Load subtasks to full configured depth (default 5 levels)
+        query = select(Todo).options(*self._get_subtask_load_options())
 
         # Filter by parent
         if parent_id is not None:
@@ -209,14 +272,10 @@ class TodoService:
 
     async def get_by_id(self, todo_id: str) -> Todo | None:
         """Get a single todo by ID with all relationships."""
+        # Load subtasks to full configured depth (default 5 levels)
         query = (
             select(Todo)
-            .options(
-                selectinload(Todo.category),
-                selectinload(Todo.tags),
-                selectinload(Todo.attachments),
-                selectinload(Todo.subtasks).selectinload(Todo.subtasks),
-            )
+            .options(*self._get_subtask_load_options())
             .where(Todo.id == todo_id)
         )
         result = await self.db.execute(query)
@@ -226,17 +285,14 @@ class TodoService:
         """Create a new todo.
 
         Raises:
-            TodoValidationError: If parent validation fails (depth limit or not found).
+            TodoValidationError: If parent validation fails (depth limit or not found),
+                or if any tag IDs don't exist.
         """
         # Validate parent if specified
         await self._validate_parent(data.parent_id)
 
-        # Get tags if specified
-        tags = []
-        if data.tag_ids:
-            tag_query = select(Tag).where(Tag.id.in_(data.tag_ids))
-            result = await self.db.execute(tag_query)
-            tags = list(result.scalars())
+        # Validate and get tags if specified
+        tags = await self._validate_and_get_tags(data.tag_ids)
 
         todo = Todo(
             title=data.title,
@@ -257,7 +313,8 @@ class TodoService:
         """Update a todo.
 
         Raises:
-            TodoValidationError: If parent validation fails (circular ref or depth limit).
+            TodoValidationError: If parent validation fails (circular ref or depth limit),
+                or if any tag IDs don't exist.
         """
         todo = await self.get_by_id(todo_id)
         if not todo:
@@ -272,13 +329,11 @@ class TodoService:
             if new_parent_id != todo.parent_id:
                 await self._validate_parent(new_parent_id, todo_id=todo_id)
 
-        # Handle tags separately
+        # Handle tags separately - validate all exist before applying
         if "tag_ids" in update_data:
             tag_ids = update_data.pop("tag_ids")
             if tag_ids is not None:
-                tag_query = select(Tag).where(Tag.id.in_(tag_ids))
-                result = await self.db.execute(tag_query)
-                todo.tags = list(result.scalars())
+                todo.tags = await self._validate_and_get_tags(tag_ids)
 
         # Handle completion status
         if "completed" in update_data:
@@ -352,14 +407,30 @@ class CategoryService:
         await self.db.flush()
         return category
 
-    async def update(self, category_id: str, **kwargs) -> Category | None:
-        """Update a category."""
+    async def update(
+        self,
+        category_id: str,
+        *,
+        name: str | None = None,
+        color: str | None = None,
+        icon: str | None = None,
+    ) -> Category | None:
+        """Update a category.
+
+        Only the explicitly provided fields will be updated.
+        Pass None to leave a field unchanged.
+        """
         category = await self.get_by_id(category_id)
         if not category:
             return None
-        for key, value in kwargs.items():
-            if hasattr(category, key) and value is not None:
-                setattr(category, key, value)
+
+        if name is not None:
+            category.name = name
+        if color is not None:
+            category.color = color
+        if icon is not None:
+            category.icon = icon
+
         await self.db.flush()
         return category
 
@@ -397,14 +468,27 @@ class TagService:
         await self.db.flush()
         return tag
 
-    async def update(self, tag_id: str, **kwargs) -> Tag | None:
-        """Update a tag."""
+    async def update(
+        self,
+        tag_id: str,
+        *,
+        name: str | None = None,
+        color: str | None = None,
+    ) -> Tag | None:
+        """Update a tag.
+
+        Only the explicitly provided fields will be updated.
+        Pass None to leave a field unchanged.
+        """
         tag = await self.get_by_id(tag_id)
         if not tag:
             return None
-        for key, value in kwargs.items():
-            if hasattr(tag, key) and value is not None:
-                setattr(tag, key, value)
+
+        if name is not None:
+            tag.name = name
+        if color is not None:
+            tag.color = color
+
         await self.db.flush()
         return tag
 

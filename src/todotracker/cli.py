@@ -9,7 +9,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 
-from todotracker.database import async_session_maker, init_db
+from todotracker.database import get_async_session_maker, init_db
 from todotracker.services.todo_service import (
     TodoService,
     CategoryService,
@@ -28,13 +28,13 @@ console = Console()
 
 def run_async(coro):
     """Run async function in sync context."""
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 async def ensure_db():
     """Ensure database is initialized."""
     await init_db()
-    async with async_session_maker() as session:
+    async with get_async_session_maker()() as session:
         priority_service = PriorityService(session)
         await priority_service.seed_defaults()
         await session.commit()
@@ -54,7 +54,7 @@ def add(
 
     async def _add():
         await ensure_db()
-        async with async_session_maker() as session:
+        async with get_async_session_maker()() as session:
             # Resolve category
             category_id = None
             if category:
@@ -135,7 +135,7 @@ def list_todos(
 
     async def _list():
         await ensure_db()
-        async with async_session_maker() as session:
+        async with get_async_session_maker()() as session:
             todo_service = TodoService(session)
 
             # Resolve category
@@ -232,7 +232,7 @@ def done(
 
     async def _done():
         await ensure_db()
-        async with async_session_maker() as session:
+        async with get_async_session_maker()() as session:
             todo_service = TodoService(session)
 
             # Try to find by partial ID
@@ -269,7 +269,7 @@ def delete(
 
     async def _delete():
         await ensure_db()
-        async with async_session_maker() as session:
+        async with get_async_session_maker()() as session:
             todo_service = TodoService(session)
 
             # Find todo
@@ -305,7 +305,7 @@ def categories():
 
     async def _categories():
         await ensure_db()
-        async with async_session_maker() as session:
+        async with get_async_session_maker()() as session:
             service = CategoryService(session)
             cats = await service.get_all()
 
@@ -338,7 +338,7 @@ def tags():
 
     async def _tags():
         await ensure_db()
-        async with async_session_maker() as session:
+        async with get_async_session_maker()() as session:
             service = TagService(session)
             all_tags = await service.get_all()
 
@@ -369,7 +369,7 @@ def priorities():
 
     async def _priorities():
         await ensure_db()
-        async with async_session_maker() as session:
+        async with get_async_session_maker()() as session:
             service = PriorityService(session)
             levels = await service.get_all()
 

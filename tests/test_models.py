@@ -99,12 +99,25 @@ class TestPriorityLevelModel:
 
     @pytest.mark.asyncio
     async def test_priority_defaults(self, test_session):
-        """Test that default priority levels are seeded."""
+        """Test that default priority levels are seeded correctly.
+
+        Note: The test_session fixture seeds default priorities.
+        This test verifies that seeding produces the expected 10 levels.
+        """
         from sqlalchemy import select
-        result = await test_session.execute(select(PriorityLevel))
+        from todotracker.services.todo_service import PriorityService
+
+        # Verify seeding is idempotent (calling again should not duplicate)
+        priority_service = PriorityService(test_session)
+        await priority_service.seed_defaults()
+        await test_session.flush()
+
+        result = await test_session.execute(
+            select(PriorityLevel).order_by(PriorityLevel.level)
+        )
         priorities = list(result.scalars())
 
-        assert len(priorities) == 10
+        assert len(priorities) == 10, f"Expected 10 priorities, got {len(priorities)}"
         assert priorities[0].level == 1
         assert priorities[0].name == "Lowest"
         assert priorities[9].level == 10
