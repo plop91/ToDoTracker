@@ -5,13 +5,34 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 from todotracker.config import get_settings
-from todotracker.database import init_db, close_db, async_session_maker
+from todotracker.database import init_db, close_db, get_async_session_maker
 from todotracker.api import router
 from todotracker.services.todo_service import PriorityService
+
+
+def _get_rate_limit_key(request: Request) -> str:
+    """Get rate limit key from request.
+
+    Uses X-Forwarded-For header if present (for reverse proxy setups),
+    otherwise falls back to remote address.
+    """
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        # X-Forwarded-For can contain multiple IPs; use the first (client IP)
+        return forwarded.split(",")[0].strip()
+    return get_remote_address(request)
+
+
+# Create limiter instance - will be configured in create_app()
+limiter = Limiter(key_func=_get_rate_limit_key)
 
 
 @asynccontextmanager
@@ -21,7 +42,7 @@ async def lifespan(app: FastAPI):
     await init_db()
 
     # Seed default priority levels
-    async with async_session_maker() as session:
+    async with get_async_session_maker()() as session:
         priority_service = PriorityService(session)
         await priority_service.seed_defaults()
         await session.commit()
@@ -42,6 +63,22 @@ def create_app() -> FastAPI:
         version="0.1.0",
         lifespan=lifespan,
     )
+
+    # Configure CORS (Cross-Origin Resource Sharing)
+    if settings.cors_enabled:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=settings.cors_allow_origins,
+            allow_credentials=settings.cors_allow_credentials,
+            allow_methods=settings.cors_allow_methods,
+            allow_headers=settings.cors_allow_headers,
+            max_age=settings.cors_max_age,
+        )
+
+    # Configure rate limiting
+    if settings.rate_limit_enabled:
+        app.state.limiter = limiter
+        app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
     # Include API routes
     app.include_router(router)

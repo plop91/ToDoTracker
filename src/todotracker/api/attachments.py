@@ -1,7 +1,11 @@
 """Attachment API endpoints."""
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, status
 from fastapi.responses import Response
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from todotracker.config import get_settings
@@ -11,19 +15,34 @@ from todotracker.services.file_service import FileService, FileValidationError
 
 router = APIRouter(tags=["attachments"])
 
+# Create a limiter for this module - uses same key function as main
+limiter = Limiter(key_func=get_remote_address)
+
+
+def _get_upload_rate_limit() -> str:
+    """Get the upload rate limit from settings."""
+    settings = get_settings()
+    if not settings.rate_limit_enabled:
+        return "1000000/minute"  # Effectively unlimited when disabled
+    return settings.rate_limit_uploads
+
 
 @router.post(
     "/todos/{todo_id}/attachments",
     response_model=AttachmentResponse,
     status_code=status.HTTP_201_CREATED,
 )
+@limiter.limit(_get_upload_rate_limit)
 async def upload_attachment(
     todo_id: str,
     file: UploadFile,
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
-    """Upload a file attachment for a todo."""
+    """Upload a file attachment for a todo.
+
+    Rate limited to prevent abuse (default: 10 uploads/minute).
+    """
     settings = get_settings()
 
     if not file.filename:
@@ -33,6 +52,7 @@ async def upload_attachment(
         )
 
     # Check Content-Length header for early rejection of oversized files
+    # Note: This can be spoofed, so we also validate during streaming read
     content_length = request.headers.get("content-length")
     if content_length:
         try:
@@ -44,9 +64,29 @@ async def upload_attachment(
                     detail=f"File size exceeds maximum allowed size of {max_mb:.1f} MB",
                 )
         except ValueError:
-            pass  # Invalid content-length header, continue with normal validation
+            pass  # Invalid content-length header, continue with streaming validation
 
-    content = await file.read()
+    # Read file in chunks to prevent memory exhaustion from spoofed Content-Length
+    # or missing headers. Reject as soon as we exceed the limit.
+    max_size = settings.max_upload_size_bytes
+    chunk_size = 64 * 1024  # 64 KB chunks
+    chunks = []
+    total_size = 0
+
+    while True:
+        chunk = await file.read(chunk_size)
+        if not chunk:
+            break
+        total_size += len(chunk)
+        if total_size > max_size:
+            max_mb = max_size / (1024 * 1024)
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"File size exceeds maximum allowed size of {max_mb:.1f} MB",
+            )
+        chunks.append(chunk)
+
+    content = b"".join(chunks)
     service = FileService(db)
 
     try:
@@ -87,12 +127,30 @@ async def download_attachment(
         )
 
     attachment, content = result
+
+    # RFC 5987 encoding for Content-Disposition to prevent header injection
+    # and properly handle non-ASCII characters
+    # Use both filename (ASCII fallback) and filename* (UTF-8 encoded) for compatibility
+    filename = attachment.original_name
+
+    # Create ASCII-safe fallback by replacing non-ASCII chars
+    ascii_filename = filename.encode('ascii', 'replace').decode('ascii').replace('?', '_')
+    # Remove any characters that could break the header
+    ascii_filename = ascii_filename.replace('"', "'").replace('\n', '_').replace('\r', '_')
+
+    # RFC 5987 encoded version for UTF-8 support
+    encoded_filename = quote(filename, safe='')
+
+    content_disposition = (
+        f"attachment; "
+        f'filename="{ascii_filename}"; '
+        f"filename*=UTF-8''{encoded_filename}"
+    )
+
     return Response(
         content=content,
         media_type=attachment.mime_type,
-        headers={
-            "Content-Disposition": f'attachment; filename="{attachment.original_name}"'
-        },
+        headers={"Content-Disposition": content_disposition},
     )
 
 

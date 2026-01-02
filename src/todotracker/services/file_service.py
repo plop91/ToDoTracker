@@ -21,6 +21,7 @@ class FileValidationError(Exception):
 
 
 # Magic bytes for common file types (first few bytes of file)
+# Special cases: .tar has signature at offset 257, .webp needs RIFF at 0 AND WEBP at 8
 MAGIC_BYTES = {
     # Images
     ".jpg": [b"\xff\xd8\xff"],
@@ -28,7 +29,7 @@ MAGIC_BYTES = {
     ".png": [b"\x89PNG\r\n\x1a\n"],
     ".gif": [b"GIF87a", b"GIF89a"],
     ".bmp": [b"BM"],
-    ".webp": [b"RIFF"],  # RIFF....WEBP
+    ".webp": [b"RIFF"],  # Also requires "WEBP" at offset 8 (checked separately)
     ".ico": [b"\x00\x00\x01\x00", b"\x00\x00\x02\x00"],
     # Documents
     ".pdf": [b"%PDF"],
@@ -51,9 +52,10 @@ MAGIC_BYTES = {
 }
 
 # Extensions that don't need magic byte validation (text-based)
+# Note: .svg excluded from allowed extensions due to XSS risk
 TEXT_EXTENSIONS = {
     ".txt", ".csv", ".json", ".xml", ".yaml", ".yml",
-    ".md", ".html", ".css", ".svg",
+    ".md", ".html", ".css",
 }
 
 
@@ -119,6 +121,13 @@ class FileService:
                     if len(content) >= 262 and content[257:262] == sig:
                         matched = True
                         break
+                # Special case for webp: needs RIFF at start AND "WEBP" at offset 8
+                elif extension == ".webp":
+                    if (len(content) >= 12 and
+                            content.startswith(sig) and
+                            content[8:12] == b"WEBP"):
+                        matched = True
+                        break
                 else:
                     if content.startswith(sig):
                         matched = True
@@ -145,6 +154,11 @@ class FileService:
         mime_type: str | None = None,
     ) -> Attachment | None:
         """Save a file attachment for a todo.
+
+        Uses a two-phase approach to prevent file orphaning:
+        1. Create database record first (can be rolled back)
+        2. Write file to disk only after successful flush
+        3. Register cleanup handler for rollback scenarios
 
         Raises:
             FileValidationError: If file validation fails (size, type, content).
@@ -179,26 +193,34 @@ class FileService:
             mime_type, _ = mimetypes.guess_type(safe_name)
             mime_type = mime_type or "application/octet-stream"
 
-        # Save file to disk
         file_path = self._get_storage_path(unique_filename)
-        file_path.write_bytes(file_content)
 
-        # Create database record
+        # Create database record FIRST (before writing file)
+        # This way, if commit fails, no file is orphaned
+        attachment = Attachment(
+            todo_id=todo_id,
+            filename=unique_filename,
+            original_name=safe_name,  # Store sanitized name
+            mime_type=mime_type,
+            size_bytes=len(file_content),
+        )
+        self.db.add(attachment)
+        await self.db.flush()
+
+        # Now write file to disk - if this fails, the DB transaction
+        # will be rolled back by the caller's error handling
         try:
-            attachment = Attachment(
-                todo_id=todo_id,
-                filename=unique_filename,
-                original_name=safe_name,  # Store sanitized name
-                mime_type=mime_type,
-                size_bytes=len(file_content),
-            )
-            self.db.add(attachment)
-            await self.db.flush()
+            file_path.write_bytes(file_content)
         except Exception:
-            # Clean up file if database operation fails
-            if file_path.exists():
-                file_path.unlink()
+            # If file write fails, we need to remove the DB record
+            # The expunge removes it from the session without hitting the DB
+            await self.db.delete(attachment)
+            await self.db.flush()
             raise
+
+        # Store file path on attachment for potential rollback cleanup
+        # This is used by the get_db dependency's rollback handler
+        attachment._pending_file_path = file_path  # type: ignore[attr-defined]
 
         return attachment
 

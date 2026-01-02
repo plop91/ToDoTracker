@@ -2,9 +2,12 @@
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from todotracker.config import get_settings
 from todotracker.database import get_db
 from todotracker.schemas.todo import (
     TodoCreate,
@@ -15,6 +18,17 @@ from todotracker.schemas.todo import (
 from todotracker.services.todo_service import TodoService, TodoValidationError
 
 router = APIRouter(prefix="/todos", tags=["todos"])
+
+# Rate limiter for this module
+limiter = Limiter(key_func=get_remote_address)
+
+
+def _get_default_rate_limit() -> str:
+    """Get the default rate limit from settings."""
+    settings = get_settings()
+    if not settings.rate_limit_enabled:
+        return "1000000/minute"  # Effectively unlimited when disabled
+    return settings.rate_limit_default
 
 
 @router.get("", response_model=TodoListResponse)
@@ -52,7 +66,9 @@ async def list_todos(
 
 
 @router.post("", response_model=TodoResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit(_get_default_rate_limit)
 async def create_todo(
+    request: Request,
     data: TodoCreate,
     db: AsyncSession = Depends(get_db),
 ):
@@ -107,7 +123,9 @@ async def _update_todo_impl(
 
 
 @router.put("/{todo_id}", response_model=TodoResponse)
+@limiter.limit(_get_default_rate_limit)
 async def update_todo(
+    request: Request,
     todo_id: str,
     data: TodoUpdate,
     db: AsyncSession = Depends(get_db),
@@ -117,7 +135,9 @@ async def update_todo(
 
 
 @router.patch("/{todo_id}", response_model=TodoResponse)
+@limiter.limit(_get_default_rate_limit)
 async def patch_todo(
+    request: Request,
     todo_id: str,
     data: TodoUpdate,
     db: AsyncSession = Depends(get_db),
@@ -127,7 +147,9 @@ async def patch_todo(
 
 
 @router.delete("/{todo_id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit(_get_default_rate_limit)
 async def delete_todo(
+    request: Request,
     todo_id: str,
     db: AsyncSession = Depends(get_db),
 ):
@@ -142,7 +164,9 @@ async def delete_todo(
 
 
 @router.post("/{todo_id}/complete", response_model=TodoResponse)
+@limiter.limit(_get_default_rate_limit)
 async def complete_todo(
+    request: Request,
     todo_id: str,
     db: AsyncSession = Depends(get_db),
 ):
@@ -158,7 +182,9 @@ async def complete_todo(
 
 
 @router.post("/{todo_id}/subtasks", response_model=TodoResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit(_get_default_rate_limit)
 async def create_subtask(
+    request: Request,
     todo_id: str,
     data: TodoCreate,
     db: AsyncSession = Depends(get_db),

@@ -47,8 +47,8 @@ class Settings(BaseSettings):
         # Documents
         ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
         ".odt", ".ods", ".odp", ".txt", ".rtf", ".csv",
-        # Images
-        ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".svg", ".ico",
+        # Images (note: .svg excluded - can contain JavaScript/XSS vectors)
+        ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".ico",
         # Archives
         ".zip", ".tar", ".gz", ".7z", ".rar",
         # Other common formats
@@ -57,6 +57,20 @@ class Settings(BaseSettings):
 
     # Subtask constraints
     max_subtask_depth: int = 5  # Maximum nesting depth for subtasks
+
+    # Rate limiting (requests per minute)
+    rate_limit_enabled: bool = True
+    rate_limit_default: str = "60/minute"  # Default rate limit for most endpoints
+    rate_limit_uploads: str = "10/minute"  # Stricter limit for file uploads
+    rate_limit_auth: str = "5/minute"  # Very strict for auth-related endpoints
+
+    # CORS (Cross-Origin Resource Sharing)
+    cors_enabled: bool = True
+    cors_allow_origins: list[str] = []  # Empty = same-origin only; use ["*"] for any origin
+    cors_allow_methods: list[str] = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+    cors_allow_headers: list[str] = ["*"]
+    cors_allow_credentials: bool = False  # Set True if using cookies/auth headers
+    cors_max_age: int = 600  # Preflight cache duration in seconds
 
     @property
     def is_homeassistant(self) -> bool:

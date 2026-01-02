@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 
 from todotracker.models import Base
 from todotracker.main import create_app
-from todotracker.database import get_db
+from todotracker.database import get_db, reset_db_state
 from todotracker.services.todo_service import PriorityService
 from todotracker.services.cache import priority_cache
 from todotracker.config import get_settings
@@ -24,10 +24,21 @@ def event_loop():
 
 @pytest.fixture(autouse=True)
 def reset_caches():
-    """Reset all caches before each test for isolation."""
+    """Reset all caches and database state before each test for isolation."""
     priority_cache.invalidate()
+    reset_db_state()
+
+    # Disable rate limiting for tests
+    settings = get_settings()
+    original_rate_limit_enabled = settings.rate_limit_enabled
+    settings.rate_limit_enabled = False
+
     yield
+
+    # Restore original settings
+    settings.rate_limit_enabled = original_rate_limit_enabled
     priority_cache.invalidate()
+    reset_db_state()
 
 
 @pytest.fixture
